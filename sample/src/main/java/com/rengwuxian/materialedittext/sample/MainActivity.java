@@ -1,6 +1,7 @@
 package com.rengwuxian.materialedittext.sample;
 
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.support.v7.app.ActionBarActivity;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -9,6 +10,7 @@ import android.widget.Button;
 import android.widget.EditText;
 
 import com.rengwuxian.materialedittext.MaterialEditText;
+import com.rengwuxian.materialedittext.validation.METValidator;
 import com.rengwuxian.materialedittext.validation.RegexpValidator;
 
 
@@ -24,6 +26,21 @@ public class MainActivity extends ActionBarActivity {
 		initSingleLineEllipsisEt();
 		initSetErrorEt();
 		initValidationEt();
+
+
+        MaterialEditText e = (MaterialEditText) findViewById(R.id.yeah);
+        e.addValidator(new METValidator("Tu as oublié l'@") {
+            @Override
+            public boolean isValid(@NonNull CharSequence text, boolean isEmpty) {
+                if(!text.toString().contains("@")){
+                    return false;
+                }
+                return true;
+            }
+        });
+
+
+
   }
 
 	private void initEnableBt() {

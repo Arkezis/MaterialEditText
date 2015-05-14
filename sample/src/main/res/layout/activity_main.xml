@@ -21,6 +21,25 @@
       android:paddingRight="16dp"
       android:paddingTop="16dp">
 
+        <com.rengwuxian.materialedittext.MaterialEditText
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Library Name"
+        app:met_floatingLabel="highlight"
+        />
+        <View android:layout_height="1dp" android:layout_width="match_parent" android:background="#ffee000f"/>
+        <com.rengwuxian.materialedittext.MaterialEditText
+            android:id="@+id/yeah"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Email"
+
+            app:met_floatingLabel="highlight"
+            app:met_helperText="Saisis ton mail et n'oublie pas l'@"
+            app:met_maxCharacters="16"
+            />
+        <View android:layout_height="1dp" android:layout_width="match_parent" android:background="#ffee000f"/>
+
       <com.rengwuxian.materialedittext.MaterialEditText
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
