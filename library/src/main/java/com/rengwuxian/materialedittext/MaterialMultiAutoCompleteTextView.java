@@ -12,11 +12,13 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.support.annotation.DrawableRes;
 import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.v7.widget.AppCompatMultiAutoCompleteTextView;
 import android.text.Editable;
 import android.text.Layout;
 import android.text.StaticLayout;
@@ -29,10 +31,10 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.MultiAutoCompleteTextView;
 
 import com.nineoldandroids.animation.ArgbEvaluator;
 import com.nineoldandroids.animation.ObjectAnimator;
+import com.rengwuxian.materialedittext.validation.METLengthChecker;
 import com.rengwuxian.materialedittext.validation.METValidator;
 
 import java.util.ArrayList;
@@ -43,7 +45,7 @@ import java.util.regex.Pattern;
 /**
  * Created by rengwuxian on 2015/1/8.
  */
-public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView {
+public class MaterialMultiAutoCompleteTextView extends AppCompatMultiAutoCompleteTextView {
 
   @IntDef({FLOATING_LABEL_NONE, FLOATING_LABEL_NORMAL, FLOATING_LABEL_HIGHLIGHT})
   public @interface FloatingLabelType {
@@ -264,6 +266,11 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
   private boolean floatingLabelAnimating;
 
   /**
+   * Whether check the characters count at the beginning it's shown.
+   */
+  private boolean checkCharactersCountAtBeginning;
+
+  /**
    * Left Icon
    */
   private Bitmap[] iconLeftBitmaps;
@@ -279,11 +286,12 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
   private Bitmap[] clearButtonBitmaps;
 
   /**
-   * Close Button
+   * Auto validate when focus lost.
    */
-  private Bitmap[] closeButtonBitmaps;
+  private boolean validateOnFocusLost;
 
   private boolean showClearButton;
+  private boolean firstShown;
   private int iconSize;
   private int iconOuterWidth;
   private int iconOuterHeight;
@@ -302,6 +310,7 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
   OnFocusChangeListener innerFocusChangeListener;
   OnFocusChangeListener outerFocusChangeListener;
   private List<METValidator> validators;
+  private METLengthChecker lengthChecker;
 
   public MaterialMultiAutoCompleteTextView(Context context) {
     super(context);
@@ -327,21 +336,13 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     bottomSpacing = getResources().getDimensionPixelSize(R.dimen.inner_components_spacing);
     bottomEllipsisSize = getResources().getDimensionPixelSize(R.dimen.bottom_ellipsis_height);
 
-    // retrieve the text colors
-    int[] textColorsAttrs = new int[]{
-        android.R.attr.textColor, // 0
-        android.R.attr.textColorHint // 1
-    };
-    TypedArray textColorsTypedArray = context.obtainStyledAttributes(attrs, textColorsAttrs);
-    textColorStateList = textColorsTypedArray.getColorStateList(0);
-    textColorHintStateList = textColorsTypedArray.getColorStateList(1);
-    textColorsTypedArray.recycle();
-
     // default baseColor is black
     int defaultBaseColor = Color.BLACK;
 
     TypedArray typedArray = context.obtainStyledAttributes(attrs, R.styleable.MaterialEditText);
-    setBaseColor(typedArray.getColor(R.styleable.MaterialEditText_met_baseColor, defaultBaseColor));
+    textColorStateList = typedArray.getColorStateList(R.styleable.MaterialEditText_met_textColor);
+    textColorHintStateList = typedArray.getColorStateList(R.styleable.MaterialEditText_met_textColorHint);
+    baseColor = typedArray.getColor(R.styleable.MaterialEditText_met_baseColor, defaultBaseColor);
 
     // retrieve the default primaryColor
     int defaultPrimaryColor;
@@ -402,18 +403,19 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     iconRightBitmaps = generateIconBitmaps(typedArray.getResourceId(R.styleable.MaterialEditText_met_iconRight, -1));
     showClearButton = typedArray.getBoolean(R.styleable.MaterialEditText_met_clearButton, false);
     clearButtonBitmaps = generateIconBitmaps(R.drawable.met_ic_clear);
-    closeButtonBitmaps = generateIconBitmaps(R.drawable.met_ic_close);
     iconPadding = typedArray.getDimensionPixelSize(R.styleable.MaterialEditText_met_iconPadding, getPixel(16));
     floatingLabelAlwaysShown = typedArray.getBoolean(R.styleable.MaterialEditText_met_floatingLabelAlwaysShown, false);
     helperTextAlwaysShown = typedArray.getBoolean(R.styleable.MaterialEditText_met_helperTextAlwaysShown, false);
+    validateOnFocusLost = typedArray.getBoolean(R.styleable.MaterialEditText_met_validateOnFocusLost, false);
+    checkCharactersCountAtBeginning = typedArray.getBoolean(R.styleable.MaterialEditText_met_checkCharactersCountAtBeginning, true);
     typedArray.recycle();
 
     int[] paddings = new int[]{
-        android.R.attr.padding, // 0
-        android.R.attr.paddingLeft, // 1
-        android.R.attr.paddingTop, // 2
-        android.R.attr.paddingRight, // 3
-        android.R.attr.paddingBottom // 4
+      android.R.attr.padding, // 0
+      android.R.attr.paddingLeft, // 1
+      android.R.attr.paddingTop, // 2
+      android.R.attr.paddingRight, // 3
+      android.R.attr.paddingBottom // 4
     };
     TypedArray paddingsTypedArray = context.obtainStyledAttributes(attrs, paddings);
     int padding = paddingsTypedArray.getDimensionPixelSize(0, 0);
@@ -445,22 +447,15 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     if (!TextUtils.isEmpty(getText())) {
       CharSequence text = getText();
       setText(null);
-      if (textColorHintStateList != null) {
-        setHintTextColor(textColorHintStateList);
-      } else {
-        setHintTextColor(baseColor & 0x00ffffff | 0x44000000);
-      }
+      resetHintTextColor();
       setText(text);
       setSelection(text.length());
       floatingLabelFraction = 1;
       floatingLabelShown = true;
     } else {
-      if (textColorHintStateList != null) {
-        setHintTextColor(textColorHintStateList);
-      } else {
-        setHintTextColor(baseColor & 0x00ffffff | 0x44000000);
-      }
+      resetHintTextColor();
     }
+    resetTextColor();
   }
 
   private void initTextWatcher() {
@@ -495,6 +490,11 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     initPadding();
   }
 
+  public void setIconLeft(Drawable drawable) {
+    iconLeftBitmaps = generateIconBitmaps(drawable);
+    initPadding();
+  }
+
   public void setIconLeft(Bitmap bitmap) {
     iconLeftBitmaps = generateIconBitmaps(bitmap);
     initPadding();
@@ -502,6 +502,11 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
 
   public void setIconRight(@DrawableRes int res) {
     iconRightBitmaps = generateIconBitmaps(res);
+    initPadding();
+  }
+
+  public void setIconRight(Drawable drawable) {
+    iconRightBitmaps = generateIconBitmaps(drawable);
     initPadding();
   }
 
@@ -530,6 +535,16 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     options.inSampleSize = size > iconSize ? size / iconSize : 1;
     options.inJustDecodeBounds = false;
     return generateIconBitmaps(BitmapFactory.decodeResource(getResources(), origin, options));
+  }
+
+  private Bitmap[] generateIconBitmaps(Drawable drawable) {
+    if (drawable == null)
+      return null;
+    Bitmap bitmap = Bitmap.createBitmap(drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight(), Bitmap.Config.ARGB_8888);
+    Canvas canvas = new Canvas(bitmap);
+    drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+    drawable.draw(canvas);
+    return generateIconBitmaps(Bitmap.createScaledBitmap(bitmap, iconSize, iconSize, false));
   }
 
   private Bitmap[] generateIconBitmaps(Bitmap origin) {
@@ -771,6 +786,14 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
   }
 
   @Override
+  protected void onAttachedToWindow() {
+    super.onAttachedToWindow();
+    if (!firstShown) {
+      firstShown = true;
+    }
+  }
+
+  @Override
   protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
     super.onLayout(changed, left, top, right, bottom);
     if (changed) {
@@ -790,8 +813,8 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     textPaint.setTextSize(bottomTextSize);
     if (tempErrorText != null || helperText != null) {
       Layout.Alignment alignment = (getGravity() & Gravity.RIGHT) == Gravity.RIGHT || isRTL() ?
-          Layout.Alignment.ALIGN_OPPOSITE : (getGravity() & Gravity.LEFT) == Gravity.LEFT ?
-          Layout.Alignment.ALIGN_NORMAL : Layout.Alignment.ALIGN_CENTER;
+        Layout.Alignment.ALIGN_OPPOSITE : (getGravity() & Gravity.LEFT) == Gravity.LEFT ?
+        Layout.Alignment.ALIGN_NORMAL : Layout.Alignment.ALIGN_CENTER;
       textLayout = new StaticLayout(tempErrorText != null ? tempErrorText : helperText, textPaint, getWidth() - getBottomTextLeftOffset() - getBottomTextRightOffset() - getPaddingLeft() - getPaddingRight(), alignment, 1.0f, 0.0f, true);
       destBottomLines = Math.max(textLayout.getLineCount(), minBottomTextLines);
     } else {
@@ -853,11 +876,7 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
             }
           } else if (!floatingLabelShown) {
             floatingLabelShown = true;
-            if (getLabelAnimator().isStarted()) {
-              getLabelAnimator().reverse();
-            } else {
-              getLabelAnimator().start();
-            }
+            getLabelAnimator().start();
           }
         }
       }
@@ -868,14 +887,13 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
       public void onFocusChange(View v, boolean hasFocus) {
         if (floatingLabelEnabled && highlightFloatingLabel) {
           if (hasFocus) {
-            if (getLabelFocusAnimator().isStarted()) {
-              getLabelFocusAnimator().reverse();
-            } else {
-              getLabelFocusAnimator().start();
-            }
+            getLabelFocusAnimator().start();
           } else {
             getLabelFocusAnimator().reverse();
           }
+        }
+        if (validateOnFocusLost && !hasFocus) {
+          validate();
         }
         if (outerFocusChangeListener != null) {
           outerFocusChangeListener.onFocusChange(v, hasFocus);
@@ -885,13 +903,20 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     super.setOnFocusChangeListener(innerFocusChangeListener);
   }
 
+  public boolean isValidateOnFocusLost() {
+    return validateOnFocusLost;
+  }
+
+  public void setValidateOnFocusLost(boolean validate) {
+    this.validateOnFocusLost = validate;
+  }
+
   public void setBaseColor(int color) {
     if (baseColor != color) {
       baseColor = color;
     }
 
-    resetTextColor();
-    resetHintTextColor();
+    initText();
 
     postInvalidate();
   }
@@ -1203,6 +1228,10 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     return this.validators;
   }
 
+  public void setLengthChecker(METLengthChecker lengthChecker) {
+    this.lengthChecker = lengthChecker;
+  }
+
   @Override
   public void setOnFocusChangeListener(OnFocusChangeListener listener) {
     if (innerFocusChangeListener == null) {
@@ -1259,7 +1288,7 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     }
 
     // draw the clear button
-    if (hasFocus() && showClearButton) {
+    if (hasFocus() && showClearButton && !TextUtils.isEmpty(getText())) {
       paint.setAlpha(255);
       int buttonLeft;
       if (isRTL()) {
@@ -1267,7 +1296,7 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
       } else {
         buttonLeft = endX - iconOuterWidth;
       }
-      Bitmap clearButtonBitmap = TextUtils.isEmpty(getText()) ? closeButtonBitmaps[0] : clearButtonBitmaps[0];
+      Bitmap clearButtonBitmap = clearButtonBitmaps[0];
       buttonLeft += (iconOuterWidth - clearButtonBitmap.getWidth()) / 2;
       int iconTop = lineStartY + bottomSpacing - iconOuterHeight + (iconOuterHeight - clearButtonBitmap.getHeight()) / 2;
       canvas.drawBitmap(clearButtonBitmap, buttonLeft, iconTop, paint);
@@ -1300,8 +1329,8 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     float bottomTextPadding = bottomTextSize + textMetrics.ascent + textMetrics.descent;
 
     // draw the characters counter
-    if ((hasFocus() && hasCharatersCounter()) || !isCharactersCountValid()) {
-      textPaint.setColor(isCharactersCountValid() ? getCurrentHintTextColor() : errorColor);
+    if ((hasFocus() && hasCharactersCounter()) || !isCharactersCountValid()) {
+      textPaint.setColor(isCharactersCountValid() ? (baseColor & 0x00ffffff | 0x44000000) : errorColor);
       String charactersCounterText = getCharactersCounterText();
       canvas.drawText(charactersCounterText, isRTL() ? startX : endX - textPaint.measureText(charactersCounterText), lineStartY + bottomSpacing + relativeHeight, textPaint);
     }
@@ -1309,9 +1338,13 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     // draw the bottom text
     if (textLayout != null) {
       if (tempErrorText != null || ((helperTextAlwaysShown || hasFocus()) && !TextUtils.isEmpty(helperText))) { // error text or helper text
-        textPaint.setColor(tempErrorText != null ? errorColor : helperTextColor != -1 ? helperTextColor : getCurrentHintTextColor());
+        textPaint.setColor(tempErrorText != null ? errorColor : helperTextColor != -1 ? helperTextColor : (baseColor & 0x00ffffff | 0x44000000));
         canvas.save();
-        canvas.translate(startX + getBottomTextLeftOffset(), lineStartY + bottomSpacing - bottomTextPadding);
+        if (isRTL()) {
+          canvas.translate(endX - textLayout.getWidth(), lineStartY + bottomSpacing - bottomTextPadding);
+        } else {
+          canvas.translate(startX + getBottomTextLeftOffset(), lineStartY + bottomSpacing - bottomTextPadding);
+        }
         textLayout.draw(canvas);
         canvas.restore();
       }
@@ -1321,7 +1354,7 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     if (floatingLabelEnabled && !TextUtils.isEmpty(floatingLabelText)) {
       textPaint.setTextSize(floatingLabelTextSize);
       // calculate the text color
-      textPaint.setColor((Integer) focusEvaluator.evaluate(focusFraction, floatingLabelTextColor != -1 ? floatingLabelTextColor : getCurrentHintTextColor(), primaryColor));
+      textPaint.setColor((Integer) focusEvaluator.evaluate(focusFraction, floatingLabelTextColor != -1 ? floatingLabelTextColor : (baseColor & 0x00ffffff | 0x44000000), primaryColor));
 
       // calculate the horizontal position
       float floatingLabelWidth = textPaint.measureText(floatingLabelText.toString());
@@ -1335,21 +1368,20 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
       }
 
       // calculate the vertical position
-      int floatingLabelStartY = innerPaddingTop + floatingLabelTextSize + floatingLabelPadding;
       int distance = floatingLabelPadding;
-      int position = (int) (floatingLabelStartY - distance * (floatingLabelAlwaysShown ? 1 : floatingLabelFraction));
+      int floatingLabelStartY = (int) (innerPaddingTop + floatingLabelTextSize + floatingLabelPadding - distance * (floatingLabelAlwaysShown ? 1 : floatingLabelFraction) + getScrollY());
 
       // calculate the alpha
-      int alpha = (int) ((floatingLabelAlwaysShown ? 1 : floatingLabelFraction) * 0xff * (0.74f * focusFraction + 0.26f));
+      int alpha = ((int) ((floatingLabelAlwaysShown ? 1 : floatingLabelFraction) * 0xff * (0.74f * focusFraction + 0.26f) * (floatingLabelTextColor != -1 ? 1 : Color.alpha(floatingLabelTextColor) / 256f)));
       textPaint.setAlpha(alpha);
 
       // draw the floating label
-      canvas.drawText(floatingLabelText.toString(), floatingLabelStartX, position, textPaint);
+      canvas.drawText(floatingLabelText.toString(), floatingLabelStartX, floatingLabelStartY, textPaint);
     }
 
     // draw the bottom ellipsis
     if (hasFocus() && singleLineEllipsis && getScrollX() != 0) {
-      paint.setColor(primaryColor);
+      paint.setColor(isInternalValid() ? primaryColor : errorColor);
       float startY = lineStartY + bottomSpacing;
       int ellipsisStartX;
       if (isRTL()) {
@@ -1385,7 +1417,7 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
   }
 
   private int getCharactersCounterWidth() {
-    return hasCharatersCounter() ? (int) textPaint.measureText(getCharactersCounterText()) : 0;
+    return hasCharactersCounter() ? (int) textPaint.measureText(getCharactersCounterText()) : 0;
   }
 
   private int getBottomEllipsisWidth() {
@@ -1393,11 +1425,11 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
   }
 
   private void checkCharactersCount() {
-    if (!hasCharatersCounter()) {
+    if ((!firstShown && !checkCharactersCountAtBeginning) || !hasCharactersCounter()) {
       charactersCountValid = true;
     } else {
       CharSequence text = getText();
-      int count = text == null ? 0 : text.length();
+      int count = text == null ? 0 : checkLength(text);
       charactersCountValid = (count >= minCharacters && (maxCharacters <= 0 || count <= maxCharacters));
     }
   }
@@ -1406,18 +1438,18 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     return charactersCountValid;
   }
 
-  private boolean hasCharatersCounter() {
+  private boolean hasCharactersCounter() {
     return minCharacters > 0 || maxCharacters > 0;
   }
 
   private String getCharactersCounterText() {
     String text;
     if (minCharacters <= 0) {
-      text = isRTL() ? maxCharacters + " / " + getText().length() : getText().length() + " / " + maxCharacters;
+      text = isRTL() ? maxCharacters + " / " + checkLength(getText()) : checkLength(getText()) + " / " + maxCharacters;
     } else if (maxCharacters <= 0) {
-      text = isRTL() ? "+" + minCharacters + " / " + getText().length() : getText().length() + " / " + minCharacters + "+";
+      text = isRTL() ? "+" + minCharacters + " / " + checkLength(getText()) : checkLength(getText()) + " / " + minCharacters + "+";
     } else {
-      text = isRTL() ? maxCharacters + "-" + minCharacters + " / " + getText().length() : getText().length() + " / " + minCharacters + "-" + maxCharacters;
+      text = isRTL() ? maxCharacters + "-" + minCharacters + " / " + checkLength(getText()) : checkLength(getText()) + " / " + minCharacters + "-" + maxCharacters;
     }
     return text;
   }
@@ -1479,5 +1511,10 @@ public class MaterialMultiAutoCompleteTextView extends MultiAutoCompleteTextView
     }
     int buttonTop = getScrollY() + getHeight() - getPaddingBottom() + bottomSpacing - iconOuterHeight;
     return (x >= buttonLeft && x < buttonLeft + iconOuterWidth && y >= buttonTop && y < buttonTop + iconOuterHeight);
+  }
+
+  private int checkLength(CharSequence text) {
+    if (lengthChecker==null) return text.length();
+    return lengthChecker.getLength(text);
   }
 }
